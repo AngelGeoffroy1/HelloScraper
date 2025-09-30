@@ -18,13 +18,14 @@ scraper_module = importlib.util.module_from_spec(spec)
 class ScraperWrapper:
     """Wrapper qui utilise le scraper original de manière asynchrone"""
 
-    def __init__(self, url: str, date_debut: Optional[str], date_fin: Optional[str], search_term: str, job_id: str, results_dir: str):
+    def __init__(self, url: str, date_debut: Optional[str], date_fin: Optional[str], search_term: str, job_id: str, results_dir: str, max_results: int = 50):
         self.url = url
         self.date_debut = date_debut
         self.date_fin = date_fin
         self.search_term = search_term or self._extract_search_from_url(url)
         self.job_id = job_id
         self.results_dir = results_dir
+        self.max_results = max_results  # Nombre max d'associations à scraper
         self.timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # Setup logging
@@ -74,10 +75,10 @@ class ScraperWrapper:
 
                 print(f"✅ {len(all_links)} associations trouvées")
 
-                # Limiter à 50 associations max pour ne pas prendre trop de temps
-                if len(all_links) > 50:
-                    print(f"⚠️  Limitation à 50 associations (sur {len(all_links)} trouvées)")
-                    all_links = all_links[:50]
+                # Limiter au nombre max configuré
+                if len(all_links) > self.max_results:
+                    print(f"⚠️  Limitation à {self.max_results} associations (sur {len(all_links)} trouvées)")
+                    all_links = all_links[:self.max_results]
 
             else:
                 # Si c'est une URL directe d'association

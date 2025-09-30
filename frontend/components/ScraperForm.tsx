@@ -19,6 +19,7 @@ export default function ScraperForm({ onJobCreated, disabled }: ScraperFormProps
   const [dateDebut, setDateDebut] = useState("")
   const [dateFin, setDateFin] = useState("")
   const [searchTerm, setSearchTerm] = useState("")
+  const [maxResults, setMaxResults] = useState("50")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -38,6 +39,7 @@ export default function ScraperForm({ onJobCreated, disabled }: ScraperFormProps
           date_debut: dateDebut || null,
           date_fin: dateFin || null,
           search_term: searchTerm || "",
+          max_results: parseInt(maxResults) || 50,
         }),
       })
 
@@ -117,6 +119,24 @@ export default function ScraperForm({ onJobCreated, disabled }: ScraperFormProps
               onChange={(e) => setSearchTerm(e.target.value)}
               disabled={disabled || loading}
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="maxResults">Nombre maximum de résultats</Label>
+            <Input
+              id="maxResults"
+              type="number"
+              min="1"
+              max="500"
+              placeholder="50"
+              value={maxResults}
+              onChange={(e) => setMaxResults(e.target.value)}
+              disabled={disabled || loading}
+            />
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              ⏱️ Temps estimé: ~{Math.ceil(parseInt(maxResults || "50") * 3 / 60)} minutes
+              (3-4 sec par association)
+            </p>
           </div>
 
           {error && (

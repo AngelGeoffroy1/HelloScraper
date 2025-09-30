@@ -34,6 +34,7 @@ class ScrapeRequest(BaseModel):
     date_debut: Optional[str] = None
     date_fin: Optional[str] = None
     search_term: Optional[str] = ""
+    max_results: Optional[int] = 50  # Nombre max d'associations à scraper
 
 class JobResponse(BaseModel):
     job_id: str
@@ -67,7 +68,7 @@ async def root():
 async def health_check():
     return {"status": "healthy"}
 
-async def run_scraper(job_id: str, url: str, date_debut: Optional[str], date_fin: Optional[str], search_term: str):
+async def run_scraper(job_id: str, url: str, date_debut: Optional[str], date_fin: Optional[str], search_term: str, max_results: int):
     """Fonction qui exécute le scraper en arrière-plan"""
     try:
         jobs[job_id]["status"] = "running"
@@ -80,7 +81,8 @@ async def run_scraper(job_id: str, url: str, date_debut: Optional[str], date_fin
             date_fin=date_fin,
             search_term=search_term,
             job_id=job_id,
-            results_dir=RESULTS_DIR
+            results_dir=RESULTS_DIR,
+            max_results=max_results
         )
 
         # Exécuter le scraping
@@ -112,7 +114,8 @@ async def start_scraping(request: ScrapeRequest, background_tasks: BackgroundTas
         "url": str(request.url),
         "date_debut": request.date_debut,
         "date_fin": request.date_fin,
-        "search_term": request.search_term
+        "search_term": request.search_term,
+        "max_results": request.max_results
     }
 
     # Lancer le scraping en arrière-plan
@@ -122,7 +125,8 @@ async def start_scraping(request: ScrapeRequest, background_tasks: BackgroundTas
         str(request.url),
         request.date_debut,
         request.date_fin,
-        request.search_term or ""
+        request.search_term or "",
+        request.max_results or 50
     )
 
     return JobResponse(
