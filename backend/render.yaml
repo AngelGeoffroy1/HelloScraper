@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: helloasso-scraper-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: PORT
+        value: 10000
+    disk:
+      name: scraper-results
+      mountPath: /opt/render/project/src/results
+      sizeGB: 1
