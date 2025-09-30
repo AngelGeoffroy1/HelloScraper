@@ -4,6 +4,7 @@ import { useState } from "react"
 import ScraperForm from "@/components/ScraperForm"
 import ScraperStatus from "@/components/ScraperStatus"
 import ResultsTable from "@/components/ResultsTable"
+import LogsViewer from "@/components/LogsViewer"
 
 export default function Home() {
   const [jobId, setJobId] = useState<string | null>(null)
@@ -40,6 +41,13 @@ export default function Home() {
                 jobId={jobId}
                 onJobComplete={() => setIsJobRunning(false)}
               />
+            </div>
+          )}
+
+          {/* Logs en temps réel */}
+          {jobId && (
+            <div className="lg:col-span-2">
+              <LogsViewer jobId={jobId} />
             </div>
           )}
 

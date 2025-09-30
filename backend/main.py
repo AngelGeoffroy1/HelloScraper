@@ -1,6 +1,6 @@
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, HttpUrl
 from typing import Optional, Dict, List
 import os
@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime
 import glob
 from scraper_wrapper import ScraperWrapper
+from collections import deque
 
 app = FastAPI(title="HelloAsso Scraper API")
 
@@ -24,6 +25,9 @@ app.add_middleware(
 
 # Stockage en mémoire des jobs (en production, utiliser Redis ou une DB)
 jobs: Dict[str, dict] = {}
+
+# Stockage des logs pour chaque job (max 1000 lignes par job)
+job_logs: Dict[str, deque] = {}
 
 # Dossier pour stocker les résultats
 RESULTS_DIR = "results"
@@ -68,11 +72,27 @@ async def root():
 async def health_check():
     return {"status": "healthy"}
 
+def add_log(job_id: str, message: str, level: str = "info"):
+    """Ajoute un log pour un job"""
+    if job_id not in job_logs:
+        job_logs[job_id] = deque(maxlen=1000)
+
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    log_entry = {
+        "timestamp": timestamp,
+        "message": message,
+        "level": level
+    }
+    job_logs[job_id].append(log_entry)
+
 async def run_scraper(job_id: str, url: str, date_debut: Optional[str], date_fin: Optional[str], search_term: str, max_results: int):
     """Fonction qui exécute le scraper en arrière-plan"""
     try:
         jobs[job_id]["status"] = "running"
         jobs[job_id]["progress"] = "Initialisation du scraper..."
+        add_log(job_id, "🚀 Démarrage du scraping...", "info")
+        add_log(job_id, f"🔍 Recherche: {search_term or url}", "info")
+        add_log(job_id, f"📊 Maximum: {max_results} résultats", "info")
 
         # Créer une instance du wrapper de scraper
         scraper = ScraperWrapper(
@@ -82,7 +102,8 @@ async def run_scraper(job_id: str, url: str, date_debut: Optional[str], date_fin
             search_term=search_term,
             job_id=job_id,
             results_dir=RESULTS_DIR,
-            max_results=max_results
+            max_results=max_results,
+            log_callback=lambda msg, lvl="info": add_log(job_id, msg, lvl)
         )
 
         # Exécuter le scraping
@@ -92,11 +113,13 @@ async def run_scraper(job_id: str, url: str, date_debut: Optional[str], date_fin
         jobs[job_id]["progress"] = "Scraping terminé avec succès"
         jobs[job_id]["result_files"] = result_files
         jobs[job_id]["completed_at"] = datetime.now().isoformat()
+        add_log(job_id, f"✅ Scraping terminé! {len(result_files)} fichier(s) généré(s)", "success")
 
     except Exception as e:
         jobs[job_id]["status"] = "failed"
         jobs[job_id]["error"] = str(e)
         jobs[job_id]["completed_at"] = datetime.now().isoformat()
+        add_log(job_id, f"❌ Erreur: {str(e)}", "error")
         print(f"Error in job {job_id}: {str(e)}")
 
 @app.post("/api/scrape", response_model=JobResponse)
@@ -219,6 +242,46 @@ async def delete_file(filename: str):
 async def list_jobs():
     """Liste tous les jobs"""
     return {"jobs": jobs}
+
+@app.get("/api/logs/{job_id}")
+async def stream_logs(job_id: str):
+    """Stream les logs d'un job en temps réel (SSE)"""
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job non trouvé")
+
+    async def log_generator():
+        """Générateur de logs pour SSE"""
+        # Envoyer les logs existants
+        if job_id in job_logs:
+            for log in job_logs[job_id]:
+                yield f"data: {json.dumps(log)}\n\n"
+
+        # Continuer à envoyer les nouveaux logs tant que le job est actif
+        last_count = len(job_logs.get(job_id, []))
+
+        while job_id in jobs and jobs[job_id]["status"] in ["pending", "running"]:
+            await asyncio.sleep(0.5)  # Vérifier toutes les 500ms
+
+            if job_id in job_logs:
+                current_logs = list(job_logs[job_id])
+                if len(current_logs) > last_count:
+                    # Envoyer les nouveaux logs
+                    for log in current_logs[last_count:]:
+                        yield f"data: {json.dumps(log)}\n\n"
+                    last_count = len(current_logs)
+
+        # Envoyer un message de fin
+        yield f"data: {json.dumps({'timestamp': datetime.now().strftime('%H:%M:%S'), 'message': 'Stream terminé', 'level': 'info'})}\n\n"
+
+    return StreamingResponse(
+        log_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 if __name__ == "__main__":
     import uvicorn

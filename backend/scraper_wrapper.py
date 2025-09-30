@@ -31,7 +31,7 @@ SEARCH_URL = "https://www.helloasso.com/e/recherche/associations"
 class ScraperWrapper:
     """Wrapper qui réutilise la logique du scraper original"""
 
-    def __init__(self, url: str, date_debut: Optional[str], date_fin: Optional[str], search_term: str, job_id: str, results_dir: str, max_results: int = 50):
+    def __init__(self, url: str, date_debut: Optional[str], date_fin: Optional[str], search_term: str, job_id: str, results_dir: str, max_results: int = 50, log_callback=None):
         self.url = url
         self.date_debut = date_debut
         self.date_fin = date_fin
@@ -39,9 +39,22 @@ class ScraperWrapper:
         self.job_id = job_id
         self.results_dir = results_dir
         self.max_results = max_results
+        self.log_callback = log_callback  # Callback pour envoyer les logs
         self.timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         self.consecutive_403_errors = 0
         self.MAX_CONSECUTIVE_403 = 5
+
+        # Session avec cookies persistants
+        self.session = requests.Session()
+        self.session.cookies.set("consent", "true", domain=".helloasso.com")
+        self.session.cookies.set("_ga", f"GA1.2.{random.randint(100000000, 999999999)}.{int(time.time())}", domain=".helloasso.com")
+        self.session.cookies.set("_gid", f"GA1.2.{random.randint(100000000, 999999999)}.{int(time.time())}", domain=".helloasso.com")
+
+    def log(self, message: str, level: str = "info"):
+        """Log un message (console + callback)"""
+        print(message)
+        if self.log_callback:
+            self.log_callback(message, level)
 
     def _extract_search_from_url(self, url: str) -> str:
         """Extrait le terme de recherche depuis l'URL"""
@@ -53,20 +66,28 @@ class ScraperWrapper:
         return ""
 
     def generate_headers(self):
-        """Génère des headers HTTP réalistes"""
+        """Génère des headers HTTP réalistes avec tous les détails d'un vrai navigateur"""
         return {
             "User-Agent": random.choice(USER_AGENTS),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
             "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1",
             "Referer": "https://www.helloasso.com/",
-            "DNT": "1"
+            "DNT": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1",
+            "Sec-Ch-Ua": '"Chromium";v="123", "Not(A:Brand";v="8"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"macOS"',
+            "Cache-Control": "max-age=0",
         }
 
-    def random_delay(self, min_seconds=2, max_seconds=5):
-        """Délai aléatoire entre requêtes"""
+    def random_delay(self, min_seconds=3, max_seconds=7):
+        """Délai aléatoire entre requêtes (plus longs pour éviter la détection)"""
         delay = random.uniform(min_seconds, max_seconds)
         time.sleep(delay)
 
@@ -76,18 +97,18 @@ class ScraperWrapper:
 
         try:
             headers = self.generate_headers()
-            response = requests.get(url, headers=headers, params=params, timeout=30)
+            response = self.session.get(url, headers=headers, params=params, timeout=30)
 
             if response.status_code == 403:
                 self.consecutive_403_errors += 1
                 if self.consecutive_403_errors >= self.MAX_CONSECUTIVE_403:
-                    print(f"⚠️  Trop d'erreurs 403. Pause de 60 secondes...")
+                    self.log(f"⚠️  Trop d'erreurs 403. Pause de 60 secondes...", "warning")
                     time.sleep(60)
                     self.consecutive_403_errors = 0
 
                 if retry_count < max_retries:
                     wait_time = (retry_count + 1) * 15
-                    print(f"⚠️  Erreur 403. Nouvelle tentative dans {wait_time}s...")
+                    self.log(f"⚠️  Erreur 403. Nouvelle tentative dans {wait_time}s...", "warning")
                     time.sleep(wait_time)
                     return self.make_request(url, params, retry_count + 1)
                 return None
@@ -95,7 +116,7 @@ class ScraperWrapper:
             elif response.status_code == 429:
                 if retry_count < max_retries:
                     wait_time = (retry_count + 1) * 30
-                    print(f"⚠️  Rate limit. Attente de {wait_time}s...")
+                    self.log(f"⚠️  Rate limit. Attente de {wait_time}s...", "warning")
                     time.sleep(wait_time)
                     return self.make_request(url, params, retry_count + 1)
                 return None
@@ -104,11 +125,11 @@ class ScraperWrapper:
                 self.consecutive_403_errors = 0
                 return response
             else:
-                print(f"⚠️  Erreur HTTP {response.status_code}")
+                self.log(f"⚠️  Erreur HTTP {response.status_code}", "warning")
                 return None
 
         except Exception as e:
-            print(f"❌ Erreur requête: {e}")
+            self.log(f"❌ Erreur requête: {e}", "error")
             if retry_count < max_retries:
                 time.sleep(random.uniform(5, 10))
                 return self.make_request(url, params, retry_count + 1)
@@ -121,10 +142,10 @@ class ScraperWrapper:
         consecutive_empty = 0
         max_empty = 3
 
-        print(f"🔍 Recherche d'associations pour '{self.search_term}'...")
+        self.log(f"🔍 Recherche d'associations pour '{self.search_term}'...")
 
         while consecutive_empty < max_empty:
-            print(f"📄 Page {page}...")
+            self.log(f"📄 Page {page}...")
 
             params = {
                 "query": self.search_term,
@@ -171,16 +192,16 @@ class ScraperWrapper:
             if association_links:
                 all_links.extend(association_links)
                 consecutive_empty = 0
-                print(f"✅ {len(association_links)} associations trouvées")
+                self.log(f"✅ {len(association_links)} associations trouvées")
             else:
                 consecutive_empty += 1
-                print(f"⚠️  Aucune association sur cette page")
+                self.log(f"⚠️  Aucune association sur cette page", "warning")
 
             page += 1
             self.random_delay(2, 4)
 
         all_links = list(set(all_links))
-        print(f"✅ Total: {len(all_links)} associations uniques")
+        self.log(f"✅ Total: {len(all_links)} associations uniques")
         return all_links
 
     def extract_email(self, html_content: str):
@@ -284,9 +305,9 @@ class ScraperWrapper:
 
     async def run(self) -> List[str]:
         """Exécute le scraping"""
-        print(f"🚀 Démarrage du scraping pour: {self.url}")
-        print(f"🔍 Terme de recherche: {self.search_term}")
-        print(f"📊 Maximum: {self.max_results} associations")
+        self.log(f"🚀 Démarrage du scraping pour: {self.url}")
+        self.log(f"🔍 Terme de recherche: {self.search_term}")
+        self.log(f"📊 Maximum: {self.max_results} associations")
 
         results = await asyncio.to_thread(self._run_sync)
         return results
@@ -301,7 +322,7 @@ class ScraperWrapper:
                 all_links = self.get_all_association_links()
 
                 if len(all_links) > self.max_results:
-                    print(f"⚠️  Limitation à {self.max_results} associations (sur {len(all_links)})")
+                    self.log(f"⚠️  Limitation à {self.max_results} associations (sur {len(all_links)})", "warning")
                     all_links = all_links[:self.max_results]
             else:
                 all_links = [self.url]
@@ -309,29 +330,29 @@ class ScraperWrapper:
             # Scraper chaque association
             total = len(all_links)
             for idx, link in enumerate(all_links, 1):
-                print(f"📊 {idx}/{total}: {link}")
+                self.log(f"📊 {idx}/{total}: {link}")
 
                 try:
                     details = self.get_association_details(link)
                     if details:
                         results.append(details)
-                        print(f"✅ {details['name']}")
+                        self.log(f"✅ {details['name']}")
 
                     self.random_delay(2, 4)
 
                 except Exception as e:
-                    print(f"❌ Erreur: {e}")
+                    self.log(f"❌ Erreur: {e}", "error")
                     continue
 
         except Exception as e:
-            print(f"❌ Erreur générale: {e}")
+            self.log(f"❌ Erreur générale: {e}", "error")
             import traceback
             traceback.print_exc()
 
         # Sauvegarder
         result_files = []
         if results:
-            print(f"💾 Sauvegarde de {len(results)} résultats...")
+            self.log(f"💾 Sauvegarde de {len(results)} résultats...")
 
             csv_file = self._save_csv(results)
             if csv_file:
@@ -341,9 +362,9 @@ class ScraperWrapper:
             if html_file:
                 result_files.append(html_file)
 
-            print(f"✅ Scraping terminé!")
+            self.log(f"✅ Scraping terminé!")
         else:
-            print(f"⚠️  Aucun résultat")
+            self.log(f"⚠️  Aucun résultat", "warning")
 
         return result_files
 
@@ -360,7 +381,7 @@ class ScraperWrapper:
             writer.writeheader()
             writer.writerows(results)
 
-        print(f"✅ CSV: {filename}")
+        self.log(f"✅ CSV: {filename}")
         return filename
 
     def _save_html(self, results: List[dict]) -> Optional[str]:
@@ -522,5 +543,5 @@ class ScraperWrapper:
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(html)
 
-        print(f"✅ HTML: {filename}")
+        self.log(f"✅ HTML: {filename}")
         return filename
